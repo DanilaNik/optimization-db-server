@@ -1,1 +1,1 @@
-# Optimization of database server occupancy
+# Optimization of database server occupancy model

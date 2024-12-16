@@ -1,0 +1,455 @@
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Симуляция Сервера Базы Данных</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        #controls {
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-around;
+        }
+        .chart-box {
+            width: 45%;
+            margin-bottom: 20px;
+        }
+        .button-container {
+            margin-top: 20px;
+        }
+    </style>
+    
+<!-- Иммитационная модель оптимизации занятости сервера БД -->
+</head>
+<body>
+    <div id="controls">
+        <label for="arrivalRate">Частота поступления запросов:</label>
+        <input type="range" id="arrivalRate" min="1" max="10" step="0.1" value="5">
+        <span id="arrivalRateValue">5</span>
+        <br>
+        <label for="serviceRate">Среднее время обслуживания:</label>
+        <input type="range" id="serviceRate" min="1" max="10" step="0.1" value="2">
+        <span id="serviceRateValue">2</span>
+        <br>
+        <label for="numServers">Количество серверов:</label>
+        <input type="range" id="numServers" min="1" max="10" step="1" value="2">
+        <span id="numServersValue">2</span>
+        <br>
+        <label for="useIndex">Использовать индексы:</label>
+        <input type="checkbox" id="useIndex" checked>
+        <br>
+        <label for="useCache">Использовать кэширование:</label>
+        <input type="checkbox" id="useCache" checked>
+        <br>
+        <label for="useTriggers">Использовать триггеры:</label>
+        <input type="checkbox" id="useTriggers" checked>
+        <br>
+        <label for="useFunctions">Использовать функции:</label>
+        <input type="checkbox" id="useFunctions" checked>
+    </div>
+    <div class="button-container">
+        <button onclick="startSimulation()">Запустить</button>
+        <button onclick="stopSimulation()">Остановить</button>
+        <button onclick="resetSimulation()">Перезапустить</button>
+    </div>
+    <div class="chart-container">
+        <div class="chart-box">
+            <canvas id="serverChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="requestChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="waitTimeChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="totalRequestsChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="indexEffectChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="cacheEffectChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="triggersEffectChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <canvas id="functionsEffectChart"></canvas>
+        </div>
+    </div>
+    <script>
+        let arrivalRate = 5;
+        let serviceRate = 2;
+        let numServers = 2;
+        let useIndex = true;
+        let useCache = true;
+        let useTriggers = true;
+        let useFunctions = true;
+        let busyServers = 0;
+        let busyServersHistory = [];
+        let requestHistory = [];
+        let waitTimeHistory = [];
+        let totalRequests = 0;
+        let currentTime = 0;
+        let simulationInterval;
+        let requestInterval;
+        let indexEffectHistory = [];
+        let cacheEffectHistory = [];
+        let triggersEffectHistory = [];
+        let functionsEffectHistory = [];
+
+        const ctxServer = document.getElementById('serverChart').getContext('2d');
+        const serverChart = new Chart(ctxServer, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Занятые серверы',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        const ctxRequest = document.getElementById('requestChart').getContext('2d');
+        const requestChart = new Chart(ctxRequest, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Обработанные запросы',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        const ctxWaitTime = document.getElementById('waitTimeChart').getContext('2d');
+        const waitTimeChart = new Chart(ctxWaitTime, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Среднее время ожидания',
+                    data: [],
+                    borderColor: 'rgba(255, 206, 86, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        const ctxTotalRequests = document.getElementById('totalRequestsChart').getContext('2d');
+        const totalRequestsChart = new Chart(ctxTotalRequests, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Общее количество запросов',
+                    data: [],
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        const ctxIndexEffect = document.getElementById('indexEffectChart').getContext('2d');
+        const indexEffectChart = new Chart(ctxIndexEffect, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Эффект индексов',
+                    data: [],
+                    borderColor: 'rgba(153, 102, 255, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        const ctxCacheEffect = document.getElementById('cacheEffectChart').getContext('2d');
+        const cacheEffectChart = new Chart(ctxCacheEffect, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Эффект кэширования',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        const ctxTriggersEffect = document.getElementById('triggersEffectChart').getContext('2d');
+        const triggersEffectChart = new Chart(ctxTriggersEffect, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Эффект триггеров',
+                    data: [],
+                    borderColor: 'rgba(255, 159, 64, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        const ctxFunctionsEffect = document.getElementById('functionsEffectChart').getContext('2d');
+        const functionsEffectChart = new Chart(ctxFunctionsEffect, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Эффект функций',
+                    data: [],
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        function generateRequest() {
+            const requestIntervalTime = Math.random() * (1.0 / arrivalRate);
+            requestInterval = setTimeout(() => {
+                handleRequest();
+                generateRequest();
+            }, requestIntervalTime * 1000);
+        }
+
+        function handleRequest() {
+            totalRequests++;
+            requestHistory.push({ x: currentTime, y: totalRequests });
+            updateRequestChart();
+            let waitTime = busyServers >= numServers ? Math.random() * (1.0 / serviceRate) : 0;
+            if (useIndex) waitTime *= 0.8; // Индексы уменьшают время ожидания
+            if (useCache) waitTime *= 0.9; // Кэширование также уменьшает время ожидания
+            if (useTriggers) waitTime *= 1.1; // Триггеры увеличивают время ожидания
+            if (useFunctions) waitTime *= 1.2; // Функции также увеличивают время ожидания
+            waitTimeHistory.push({ x: currentTime, y: waitTime });
+            updateWaitTimeChart();
+            if (busyServers < numServers) {
+                busyServers++;
+                busyServersHistory.push({ x: currentTime, y: busyServers });
+                updateServerChart();
+                const serviceTime = Math.random() * (1.0 / serviceRate);
+                setTimeout(() => {
+                    busyServers--;
+                    busyServersHistory.push({ x: currentTime, y: busyServers });
+                    updateServerChart();
+                }, serviceTime * 1000);
+            }
+            indexEffectHistory.push({ x: currentTime, y: useIndex ? 0.8 : 1 });
+            cacheEffectHistory.push({ x: currentTime, y: useCache ? 0.9 : 1 });
+            triggersEffectHistory.push({ x: currentTime, y: useTriggers ? 1.1 : 1 });
+            functionsEffectHistory.push({ x: currentTime, y: useFunctions ? 1.2 : 1 });
+            updateIndexEffectChart();
+            updateCacheEffectChart();
+            updateTriggersEffectChart();
+            updateFunctionsEffectChart();
+        }
+
+        function updateServerChart() {
+            serverChart.data.labels.push(currentTime);
+            serverChart.data.datasets[0].data.push(busyServers);
+            serverChart.update();
+        }
+
+        function updateRequestChart() {
+            requestChart.data.labels.push(currentTime);
+            requestChart.data.datasets[0].data.push(totalRequests);
+            requestChart.update();
+        }
+
+        function updateWaitTimeChart() {
+            waitTimeChart.data.labels.push(currentTime);
+            waitTimeChart.data.datasets[0].data.push(waitTimeHistory[waitTimeHistory.length - 1].y);
+            waitTimeChart.update();
+        }
+
+        function updateTotalRequestsChart() {
+            totalRequestsChart.data.labels.push(currentTime);
+            totalRequestsChart.data.datasets[0].data.push(totalRequests);
+            totalRequestsChart.update();
+            currentTime += 0.1;
+        }
+
+        function updateIndexEffectChart() {
+            indexEffectChart.data.labels.push(currentTime);
+            indexEffectChart.data.datasets[0].data.push(indexEffectHistory[indexEffectHistory.length - 1].y);
+            indexEffectChart.update();
+        }
+
+        function updateCacheEffectChart() {
+            cacheEffectChart.data.labels.push(currentTime);
+            cacheEffectChart.data.datasets[0].data.push(cacheEffectHistory[cacheEffectHistory.length - 1].y);
+            cacheEffectChart.update();
+        }
+
+        function updateTriggersEffectChart() {
+            triggersEffectChart.data.labels.push(currentTime);
+            triggersEffectChart.data.datasets[0].data.push(triggersEffectHistory[triggersEffectHistory.length - 1].y);
+            triggersEffectChart.update();
+        }
+
+        function updateFunctionsEffectChart() {
+            functionsEffectChart.data.labels.push(currentTime);
+            functionsEffectChart.data.datasets[0].data.push(functionsEffectHistory[functionsEffectHistory.length - 1].y);
+            functionsEffectChart.update();
+        }
+
+        function updateParameters() {
+            arrivalRate = parseFloat(document.getElementById('arrivalRate').value);
+            serviceRate = parseFloat(document.getElementById('serviceRate').value);
+            numServers = parseInt(document.getElementById('numServers').value);
+            useIndex = document.getElementById('useIndex').checked;
+            useCache = document.getElementById('useCache').checked;
+            useTriggers = document.getElementById('useTriggers').checked;
+            useFunctions = document.getElementById('useFunctions').checked;
+            document.getElementById('arrivalRateValue').innerText = arrivalRate;
+            document.getElementById('serviceRateValue').innerText = serviceRate;
+            document.getElementById('numServersValue').innerText = numServers;
+        }
+
+        function startSimulation() {
+            if (!simulationInterval) {
+                generateRequest();
+                simulationInterval = setInterval(updateTotalRequestsChart, 100);
+            }
+        }
+
+        function stopSimulation() {
+            if (simulationInterval) {
+                clearInterval(simulationInterval);
+                clearTimeout(requestInterval);
+                simulationInterval = null;
+            }
+        }
+
+        function resetSimulation() {
+            stopSimulation();
+            busyServers = 0;
+            busyServersHistory = [];
+            requestHistory = [];
+            waitTimeHistory = [];
+            indexEffectHistory = [];
+            cacheEffectHistory = [];
+            triggersEffectHistory = [];
+            functionsEffectHistory = [];
+            totalRequests = 0;
+            currentTime = 0;
+            serverChart.data.labels = [];
+            serverChart.data.datasets[0].data = [];
+            serverChart.update();
+            requestChart.data.labels = [];
+            requestChart.data.datasets[0].data = [];
+            requestChart.update();
+            waitTimeChart.data.labels = [];
+            waitTimeChart.data.datasets[0].data = [];
+            waitTimeChart.update();
+            totalRequestsChart.data.labels = [];
+            totalRequestsChart.data.datasets[0].data = [];
+            totalRequestsChart.update();
+            indexEffectChart.data.labels = [];
+            indexEffectChart.data.datasets[0].data = [];
+            indexEffectChart.update();
+            cacheEffectChart.data.labels = [];
+            cacheEffectChart.data.datasets[0].data = [];
+            cacheEffectChart.update();
+            triggersEffectChart.data.labels = [];
+            triggersEffectChart.data.datasets[0].data = [];
+            triggersEffectChart.update();
+            functionsEffectChart.data.labels = [];
+            functionsEffectChart.data.datasets[0].data = [];
+            functionsEffectChart.update();
+        }
+
+        document.getElementById('arrivalRate').addEventListener('input', updateParameters);
+        document.getElementById('serviceRate').addEventListener('input', updateParameters);
+        document.getElementById('numServers').addEventListener('input', updateParameters);
+        document.getElementById('useIndex').addEventListener('change', updateParameters);
+        document.getElementById('useCache').addEventListener('change', updateParameters);
+        document.getElementById('useTriggers').addEventListener('change', updateParameters);
+        document.getElementById('useFunctions').addEventListener('change', updateParameters);
+    </script>
+</body>
+</html>
